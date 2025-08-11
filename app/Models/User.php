@@ -27,6 +27,15 @@ class User extends Authenticatable
         'age_group_id',
         'mobile_number',
         'is_mobile_verified',
+        'approval_status',
+        'approved_by',
+        'approved_at',
+        'rejection_reason',
+        'voter_verified',
+        'voter_id',
+        'registration_date',
+        'account_expiry',
+        'is_temporary',
     ];
 
     /**
@@ -50,6 +59,11 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'is_mobile_verified' => 'boolean',
+            'approved_at' => 'datetime',
+            'voter_verified' => 'boolean',
+            'registration_date' => 'datetime',
+            'account_expiry' => 'datetime',
+            'is_temporary' => 'boolean',
         ];
     }
 
@@ -140,5 +154,93 @@ class User extends Authenticatable
     public function sendPasswordResetNotification($token)
     {
         $this->notify(new ResetPasswordNotification($token));
+    }
+
+    public function approver()
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function approvedUsers()
+    {
+        return $this->hasMany(User::class, 'approved_by');
+    }
+
+    public function isPending()
+    {
+        return $this->approval_status === 'pending';
+    }
+
+    public function isApproved()
+    {
+        return $this->approval_status === 'approved';
+    }
+
+    public function isRejected()
+    {
+        return $this->approval_status === 'rejected';
+    }
+
+    public function canApproveRole($roleSlug)
+    {
+        if ($this->role->slug === 'manager') {
+            return in_array($roleSlug, ['supervisor', 'staff']);
+        }
+        
+        if ($this->role->slug === 'staff') {
+            return $roleSlug === 'resident';
+        }
+
+        return false;
+    }
+
+    public function approve($approver)
+    {
+        if (!$approver->canApproveRole($this->role->slug)) {
+            throw new \Exception('You do not have permission to approve this user.');
+        }
+
+        $this->update([
+            'approval_status' => 'approved',
+            'approved_by' => $approver->id,
+            'approved_at' => now(),
+            'rejection_reason' => null,
+        ]);
+    }
+
+    public function reject($approver, $reason)
+    {
+        if (!$approver->canApproveRole($this->role->slug)) {
+            throw new \Exception('You do not have permission to reject this user.');
+        }
+
+        $this->update([
+            'approval_status' => 'rejected',
+            'approved_by' => $approver->id,
+            'approved_at' => now(),
+            'rejection_reason' => $reason,
+        ]);
+    }
+
+    public function isTemporary()
+    {
+        return $this->is_temporary;
+    }
+
+    public function isExpired()
+    {
+        if (!$this->is_temporary) {
+            return false;
+        }
+        return $this->account_expiry && now()->gt($this->account_expiry);
+    }
+
+    public function initializeTemporaryAccount()
+    {
+        $this->update([
+            'is_temporary' => true,
+            'registration_date' => now(),
+            'account_expiry' => now()->addDays(3),
+        ]);
     }
 }
